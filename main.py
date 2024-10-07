@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import logging
+import re  # Modul für reguläre Ausdrücke
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -20,11 +21,16 @@ bot_id = os.getenv("BotId")
 # Webseite mit Turnierdaten
 WEB_URL = "https://www.pccaddie.net/clubs/0493347/app.php?cat=ts_calendar"
 
-
 def extract_clean_text(element, fallback=""):
     """Hilfsfunktion zur Bereinigung des Textes."""
     return element.get_text(strip=True) if element else fallback
 
+def clean_text(text):
+    """Hilfsfunktion, um Mehrfach-Leerzeichen zu entfernen und die Daten einzeilig zu halten."""
+    # Entferne alle mehrfachen Leerzeichen und formatiere den Text einzeilig
+    text = re.sub(r'\s+', ' ', text)  # Ersetze mehrere Leerzeichen durch eins
+    text = text.strip()  # Entferne führende und nachfolgende Leerzeichen
+    return text
 
 def get_tournament_data():
     """Extrahiere Turnierdaten von der Webseite und konsolidiere die ersten 3 Einträge."""
@@ -45,10 +51,12 @@ def get_tournament_data():
     # Maximal 3 Einträge erfassen
     for i in range(min(5, len(events))):
         datum = extract_clean_text(events[i])
+        datum = clean_text(datum)  # Text bereinigen
 
         # Überprüfen, ob es genug Veranstaltungen gibt
         if i < len(names):
             veranstaltung = extract_clean_text(names[i], "Veranstaltung nicht gefunden")
+            veranstaltung = clean_text(veranstaltung)  # Text bereinigen
         else:
             veranstaltung = "Veranstaltung nicht gefunden"
 
@@ -63,7 +71,6 @@ def get_tournament_data():
         })
 
     return tournament_data
-
 
 def update_tournament_data(tournament_data):
     """Aktualisiere die Turnierdaten über die API."""
@@ -90,7 +97,6 @@ def update_tournament_data(tournament_data):
         logging.error(f"Request Fehler: {req_err}")
     except Exception as err:
         logging.error(f"Unbekannter Fehler: {err}")
-
 
 if __name__ == "__main__":
     # Turnierdaten von der Webseite holen
