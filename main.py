@@ -1,93 +1,103 @@
 import os
 import requests
-from dotenv import load_dotenv
 import json
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import logging
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
 
+# .env Datei laden
 load_dotenv()
 
+# API- und Tabellendaten aus der .env Datei laden
 api_url = os.getenv("ApiUrl").rstrip('/')
 token = os.getenv("PersonalAccessToken")
 table_id = os.getenv("TableId")
 bot_id = os.getenv("BotId")
 
-WEB_URL = "https://www.golfclub-rehburg-loccum.de/index.php?id=1"
+# Webseite mit Turnierdaten
+WEB_URL = "https://www.pccaddie.net/clubs/0493347/app.php?cat=ts_calendar"
 
 
-def extract_status(soup, resource_name):
-    """Hilfsfunktion, um den Status eines Platzes zu extrahieren."""
-    try:
-        status = soup.find(string=resource_name).find_next("div", class_="tx_gkmb_rs_pi1_statustext").text.strip()
-        return status
-    except AttributeError:
-        logging.error(f"Konnte den Status für {resource_name} nicht finden.")
-        return "-"
+def extract_clean_text(element, fallback=""):
+    """Hilfsfunktion zur Bereinigung des Textes."""
+    return element.get_text(strip=True) if element else fallback
 
 
-def get_data_from_web():
-    # Webseite abrufen
+def get_tournament_data():
+    """Extrahiere Turnierdaten von der Webseite und konsolidiere die ersten 3 Einträge."""
     try:
         response = requests.get(WEB_URL)
-        response.raise_for_status()  # Überprüfe auf Fehler
+        response.raise_for_status()
         soup = BeautifulSoup(response.content, "html.parser")
     except requests.exceptions.RequestException as e:
         logging.error(f"Fehler beim Abrufen der Webseite: {e}")
-        return "-", "-", "-", "-", "-", "-"
+        return []
 
-    # Platzinformationen extrahieren
-    status_18_loch = extract_status(soup, "18-Loch Platz")
-    status_westwind = extract_status(soup, "WestWind-Kurzplatz")
-    status_driving_range = extract_status(soup, "Driving-Range")
-    status_uebungsgruens = extract_status(soup, "Übungsgrüns")
-    status_trolleys = extract_status(soup, "Trolleys")
-    status_e_carts = extract_status(soup, "E-Carts")
+    tournament_data = []
 
-    # Rückgabe der Werte
-    return status_18_loch, status_westwind, status_driving_range, status_uebungsgruens, status_trolleys, status_e_carts
+    # Suche nach den Turnierdaten in den relevanten span-Tags
+    events = soup.find_all("span", class_="tk-club")
+    names = soup.find_all("span", class_="tk-public")
+
+    # Maximal 3 Einträge erfassen
+    for i in range(min(5, len(events))):
+        datum = extract_clean_text(events[i])
+
+        # Überprüfen, ob es genug Veranstaltungen gibt
+        if i < len(names):
+            veranstaltung = extract_clean_text(names[i], "Veranstaltung nicht gefunden")
+        else:
+            veranstaltung = "Veranstaltung nicht gefunden"
+
+        logging.info(f"Datum: {datum}, Veranstaltung: {veranstaltung}")
+
+        # Daten zur Liste hinzufügen
+        tournament_data.append({
+            "id": i + 1,  # ID zum Aktualisieren
+            "Datum": datum,
+            "Veranstaltung": veranstaltung,
+            "Offen": "0"  # Platzhalter für die "Offen"-Spalte, kann später angepasst werden
+        })
+
+    return tournament_data
 
 
-def update_status(status_18_loch, status_westwind, status_driving_range, status_uebungsgruens, status_trolleys,
-                  status_e_carts):
+def update_tournament_data(tournament_data):
+    """Aktualisiere die Turnierdaten über die API."""
     url = f"{api_url}/tables/{table_id}/rows"
 
     headers = {
+        "x-bot-id": bot_id,
         "Authorization": f"Bearer {token}",
         "accept": "application/json",
-        "content-type": "application/json",
-        "x-bot-id": bot_id,
+        "content-type": "application/json"
     }
 
-    # Daten für die 6 Zeilen
-    data = {
-        "rows": [
-            {"id": 1, "Status": status_18_loch},
-            {"id": 2, "Status": status_westwind},
-            {"id": 3, "Status": status_driving_range},
-            {"id": 4, "Status": status_uebungsgruens},
-            {"id": 5, "Status": status_trolleys},
-            {"id": 6, "Status": status_e_carts},
-        ]
-    }
+    # Daten für die Zeilen erstellen
+    data = {"rows": tournament_data}
 
     try:
         response = requests.put(url, headers=headers, data=json.dumps(data))
         response.raise_for_status()
-        logging.info("Rows updated successfully")
+        logging.info("Turnierdaten erfolgreich aktualisiert")
     except requests.exceptions.HTTPError as http_err:
-        logging.error(f"HTTP Fehler: {http_err}")
+        logging.error(f"HTTP Fehler: {http_err} (Code: {response.status_code})")
         logging.error(f"Response: {response.text}")
+    except requests.exceptions.RequestException as req_err:
+        logging.error(f"Request Fehler: {req_err}")
     except Exception as err:
-        logging.error(f"Anderer Fehler: {err}")
+        logging.error(f"Unbekannter Fehler: {err}")
 
 
 if __name__ == "__main__":
-    # Hole die Daten von der Webseite
-    status_18_loch, status_westwind, status_driving_range, status_uebungsgruens, status_trolleys, status_e_carts = get_data_from_web()
+    # Turnierdaten von der Webseite holen
+    tournament_data = get_tournament_data()
 
-    # Aktualisiere die Tabelle mit den Werten
-    update_status(status_18_loch, status_westwind, status_driving_range, status_uebungsgruens, status_trolleys,
-                  status_e_carts)
+    if tournament_data:
+        # Aktualisiere die Tabelle mit den Turnierdaten
+        update_tournament_data(tournament_data)
+    else:
+        logging.info("Keine Turnierdaten gefunden.")
