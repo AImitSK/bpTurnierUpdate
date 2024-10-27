@@ -32,8 +32,9 @@ def clean_text(text):
     text = text.strip()  # Entferne führende und nachfolgende Leerzeichen
     return text
 
+
 def get_tournament_data():
-    """Extrahiere Turnierdaten von der Webseite und konsolidiere die ersten 3 Einträge."""
+    """Extrahiere Turnierdaten von der Webseite und konsolidiere die ersten 5 Einträge."""
     try:
         response = requests.get(WEB_URL)
         response.raise_for_status()
@@ -43,34 +44,34 @@ def get_tournament_data():
         return []
 
     tournament_data = []
+    events = soup.find_all("tr", class_="pcco-xcal-list-item")
 
-    # Suche nach den Turnierdaten in den relevanten span-Tags
-    events = soup.find_all("span", class_="tk-club")
-    names = soup.find_all("span", class_="tk-public")
+    for idx, event in enumerate(events):
+        # Alle Zeiträume für den Tag sammeln und zusammenfügen
+        times = [clean_text(span.get_text()) for span in event.find_all("span", class_="tk-club")]
+        datum = " und ".join(times) if times else "Datum nicht gefunden"
 
-    # Maximal 3 Einträge erfassen
-    for i in range(min(5, len(events))):
-        datum = extract_clean_text(events[i])
-        datum = clean_text(datum)  # Text bereinigen
+        # Turniername extrahieren
+        name_container = event.find("span", class_="tk-turnier")
+        veranstaltung = clean_text(name_container.get_text()) if name_container else "Veranstaltung nicht gefunden"
 
-        # Überprüfen, ob es genug Veranstaltungen gibt
-        if i < len(names):
-            veranstaltung = extract_clean_text(names[i], "Veranstaltung nicht gefunden")
-            veranstaltung = clean_text(veranstaltung)  # Text bereinigen
-        else:
-            veranstaltung = "Veranstaltung nicht gefunden"
+        # Offen-Status prüfen und Beschriftung setzen
+        is_open = "offenes Turnier" if event.find("i", class_="fa-check") else "geschlossenes Turnier"
 
-        logging.info(f"Datum: {datum}, Veranstaltung: {veranstaltung}")
-
-        # Daten zur Liste hinzufügen
-        tournament_data.append({
-            "id": i + 1,  # ID zum Aktualisieren
+        # Daten hinzufügen im erwarteten Format
+        entry = {
+            "id": idx + 1,  # Eindeutige ID für jeden Eintrag
             "Datum": datum,
             "Veranstaltung": veranstaltung,
-            "Offen": "0"  # Platzhalter für die "Offen"-Spalte, kann später angepasst werden
-        })
+            "Offen": is_open
+        }
+        tournament_data.append(entry)
+
+        # Debugging-Ausgabe für jedes Turnier
+        print(f"Eintrag {idx + 1}: {entry}")
 
     return tournament_data
+
 
 def update_tournament_data(tournament_data):
     """Aktualisiere die Turnierdaten über die API."""
@@ -83,7 +84,7 @@ def update_tournament_data(tournament_data):
         "content-type": "application/json"
     }
 
-    # Daten für die Zeilen erstellen
+    # Daten im geforderten Format übergeben
     data = {"rows": tournament_data}
 
     try:
@@ -98,12 +99,20 @@ def update_tournament_data(tournament_data):
     except Exception as err:
         logging.error(f"Unbekannter Fehler: {err}")
 
+
+# Hauptprogramm für den Aufruf der Funktionen
 if __name__ == "__main__":
     # Turnierdaten von der Webseite holen
     tournament_data = get_tournament_data()
+
+    # Debugging-Ausgabe der gesamten Liste
+    print("\nGesammelte Turnierdaten:")
+    for entry in tournament_data:
+        print(entry)
 
     if tournament_data:
         # Aktualisiere die Tabelle mit den Turnierdaten
         update_tournament_data(tournament_data)
     else:
         logging.info("Keine Turnierdaten gefunden.")
+
